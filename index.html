@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Presupuesto de mi finca</title>
+<style>
+:root{--bg:#f6f7f4;--card:#fff;--tx:#1d2320;--mut:#65706a;--line:#dfe3dd;--ok:#2e7d4f;--bad:#b3412e;--acc:#4a7c3a;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#151a17;--card:#1f2622;--tx:#e8ede9;--mut:#9aa69f;--line:#333d37;--ok:#5fc27f;--bad:#f08a72;--acc:#8fc77a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#151a17;--card:#1f2622;--tx:#e8ede9;--mut:#9aa69f;--line:#333d37;--ok:#5fc27f;--bad:#f08a72;--acc:#8fc77a;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;padding:env(safe-area-inset-top,0px) 12px env(safe-area-inset-bottom,0px)}
+main{max-width:1100px;margin:0 auto;padding:12px 0 40px}
+h1{font-size:22px;margin:8px 0 4px} h2{font-size:17px;margin:0 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.kpi span{color:var(--mut);font-size:13px}
+.kpi b{display:block;font-size:18px;margin-top:4px}
+.pos{color:var(--ok)} .neg{color:var(--bad)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:900px}
+th,td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:var(--card);min-width:190px}
+th{color:var(--mut);font-weight:600;font-size:13px}
+tr.sec td{font-weight:700;color:var(--acc);text-align:left;padding-top:12px;border:0}
+tr.tot td{font-weight:700}
+input[type=number]{width:86px;padding:5px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--tx);text-align:right}
+input.txt{width:70px;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--tx)}
+button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:14px;cursor:pointer}
+button.sec2{background:transparent;color:var(--tx);border:1px solid var(--line)}
+label{color:var(--mut);font-size:13px;display:flex;gap:6px;align-items:center}
+svg{width:100%;height:auto}
+.alert{color:var(--bad);font-size:14px;margin:10px 0 0}
+.nota{color:var(--mut);font-size:13px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<main>
+<h1>Presupuesto de mi finca</h1>
+<p class="nota" style="margin:0 0 12px">Ingresa los montos por mes. Los datos se guardan en este navegador.</p>
+
+<div class="card row">
+  <label>Moneda <input class="txt" id="mon" value="$"></label>
+  <label>Saldo inicial <input type="number" id="s0" value="0" style="width:110px"></label>
+  <button class="sec2" id="ej">Cargar ejemplo</button>
+  <button class="sec2" id="lim">Borrar todo</button>
+</div>
+
+<div class="card">
+  <div class="kpis" id="kpis"></div>
+  <p class="alert" id="alerta"></p>
+</div>
+
+<div class="card">
+  <h2>Flujo mensual</h2>
+  <div id="graf"></div>
+  <p class="nota">Barras verdes: ingresos. Barras rojas: gastos. Línea azul-verde: saldo acumulado.</p>
+</div>
+
+<div class="card">
+  <h2>Captura mensual</h2>
+  <div class="scroll"><table id="tbl"></table></div>
+</div>
+
+<div class="card">
+  <h2>Resumen mensual</h2>
+  <div class="scroll"><table id="res"></table></div>
+</div>
+</main>
+
+<script>
+const MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const SEC=[
+  {t:'Ingresos',rows:[['salario','Salario (fijo)'],['cosecha','Venta de cosecha'],['pecuario','Ganado, leche, huevos'],['otros','Otros ingresos']]},
+  {t:'Gastos de la finca',rows:[['insumos','Semillas e insumos'],['fert','Fertilizantes y fitosanitarios'],['alim','Alimentación de animales'],['vet','Veterinario'],['mo','Mano de obra'],['comb','Combustible y riego'],['mant','Mantenimiento y reparaciones']]},
+  {t:'Gastos del hogar',rows:[['vivienda','Vivienda y servicios'],['comida','Alimentación'],['transp','Transporte'],['salud','Salud y educación'],['otrosh','Otros del hogar']]}
+];
+const FIN_IDS=['insumos','fert','alim','vet','mo','comb','mant'];
+const HOG_IDS=['vivienda','comida','transp','salud','otrosh'];
+const KEY='presupuesto-finca-v1';
+const $=id=>document.getElementById(id);
+const rep=v=>Array(12).fill(v);
+
+const D={};
+SEC.forEach(s=>s.rows.forEach(([id])=>D[id]=rep(0)));
+
+const EJEMPLO={
+  salario:rep(1200), cosecha:[0,0,0,1800,0,0,0,0,0,2400,0,0], pecuario:rep(300), otros:rep(0),
+  insumos:[400,0,0,350,0,0,400,0,0,350,0,0], fert:[0,250,0,0,250,0,0,250,0,0,250,0],
+  alim:rep(180), vet:[0,0,120,0,0,120,0,0,120,0,0,120], mo:rep(250), comb:rep(120), mant:[0,0,0,0,0,0,300,0,0,0,0,0],
+  vivienda:rep(500), comida:rep(350), transp:rep(120), salud:rep(80), otrosh:rep(100)
+};
+
+const fmt=n=>{const v=Math.round(n);return (v<0?'-':'')+$('mon').value+' '+Math.abs(v).toLocaleString('es');};
+const sum=a=>a.reduce((x,y)=>x+y,0);
+
+function calc(m){
+  const g=id=>D[id][m];
+  const ingFinca=g('cosecha')+g('pecuario');
+  const gFinca=FIN_IDS.reduce((a,id)=>a+g(id),0);
+  const gHog=HOG_IDS.reduce((a,id)=>a+g(id),0);
+  const ingTot=g('salario')+ingFinca+g('otros');
+  const gTot=gFinca+gHog;
+  return {ingFinca,gFinca,resFinca:ingFinca-gFinca,gHog,ingTot,gTot,flujo:ingTot-gTot};
+}
+
+function calcAll(){
+  const c=[...Array(12)].map((_,m)=>calc(m));
+  let acum=+$('s0').value||0;
+  const saldos=c.map(x=>(acum+=x.flujo));
+  return {c,saldos};
+}
+
+function renderTabla(){
+  let h='<tr><th>Concepto</th>'+MESES.map(m=>`<th>${m}</th>`).join('')+'</tr>';
+  SEC.forEach(s=>{
+    h+=`<tr class="sec"><td colspan="13">${s.t}</td></tr>`;
+    s.rows.forEach(([id,lab])=>{
+      h+=`<tr><td>${lab}</td>`+D[id].map((v,m)=>
+        `<td><input type="number" min="0" step="any" data-id="${id}" data-m="${m}" value="${v||''}"></td>`).join('')+'</tr>';
+    });
+  });
+  $('tbl').innerHTML=h;
+}
+
+function renderResumen(c,saldos){
+  const filas=[
+    ['Ingresos totales',c.map(x=>x.ingTot),'flujo'],
+    ['Gastos de la finca',c.map(x=>x.gFinca),'plain'],
+    ['Resultado de la finca',c.map(x=>x.resFinca),'flujo'],
+    ['Gastos del hogar',c.map(x=>x.gHog),'plain'],
+    ['Flujo del mes',c.map(x=>x.flujo),'flujo'],
+    ['Saldo acumulado',saldos,'saldo']
+  ];
+  let h='<tr><th>Mes</th>'+MESES.map(m=>`<th>${m}</th>`).join('')+'<th>Año</th></tr>';
+  filas.forEach(([lab,arr,tipo])=>{
+    const cls=tipo==='plain'?'':(tipo==='saldo'?'tot':'tot');
+    const anual=tipo==='saldo'?arr[11]:sum(arr);
+    const color=v=>tipo==='plain'?'':(v<0?'neg':'pos');
+    h+=`<tr class="${cls}"><td>${lab}</td>`+arr.map(v=>`<td class="${color(v)}">${fmt(v)}</td>`).join('')+
+       `<td class="${color(anual)}">${fmt(anual)}</td></tr>`;
+  });
+  $('res').innerHTML=h;
+}
+
+function renderKpis(c,saldos){
+  const T=k=>sum(c.map(x=>x[k]));
+  const resF=T('resFinca'), flujo=T('flujo'), final=saldos[11];
+  const cobertura=T('gHog')>0?Math.round(T('ingFinca')/T('gHog')*100):0;
+  const k=(lab,val,cls)=>`<div class="kpi"><span>${lab}</span><b class="${cls||''}">${val}</b></div>`;
+  $('kpis').innerHTML=
+    k('Resultado neto de la finca',fmt(resF),resF<0?'neg':'pos')+
+    k('Flujo anual total',fmt(flujo),flujo<0?'neg':'pos')+
+    k('Saldo final del año',fmt(final),final<0?'neg':'pos')+
+    k('Ingresos de la finca',fmt(T('ingFinca')))+
+    k('Cubre el hogar',cobertura+' %',cobertura>=100?'pos':'')
+  ;
+  const negMeses=saldos.map((v,i)=>v<0?MESES[i]:null).filter(Boolean);
+  $('alerta').textContent=negMeses.length?'Saldo negativo en: '+negMeses.join(', ')+'. Considera reservar dinero o adelantar ingresos en esos meses.':'';
+}
+
+function renderGrafico(c,saldos){
+  const W=640,H=240,P=28;
+  const max=Math.max(1,...c.map(x=>Math.max(x.ingTot,x.gTot)),...saldos.map(Math.abs));
+  const y=v=>H-P-(v+max)/(2*max)*(H-2*P);
+  const cw=(W-2*P)/12, bw=cw*0.35;
+  let s=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
+  s+=`<line x1="${P}" x2="${W-P}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--line)"/>`;
+  c.forEach((x,i)=>{
+    const x0=P+i*cw+cw*0.12;
+    const yi=y(x.ingTot), yg=y(x.gTot), y0=y(0);
+    s+=`<rect x="${x0}" y="${Math.min(yi,y0)}" width="${bw}" height="${Math.abs(yi-y0)}" style="fill:var(--ok);opacity:.8"/>`;
+    s+=`<rect x="${x0+bw+2}" y="${Math.min(yg,y0)}" width="${bw}" height="${Math.abs(yg-y0)}" style="fill:var(--bad);opacity:.8"/>`;
+    s+=`<text x="${P+i*cw+cw/2}" y="${H-6}" text-anchor="middle" style="fill:var(--mut);font-size:11px">${MESES[i]}</text>`;
+  });
+  const pts=saldos.map((v,i)=>`${P+i*cw+cw/2},${y(v)}`).join(' ');
+  s+=`<polyline points="${pts}" style="fill:none;stroke:var(--acc);stroke-width:2.5"/>`;
+  saldos.forEach((v,i)=>{s+=`<circle cx="${P+i*cw+cw/2}" cy="${y(v)}" r="3" style="fill:var(--acc)"/>`;});
+  s+='</svg>';
+  $('graf').innerHTML=s;
+}
+
+function actualizar(){
+  const {c,saldos}=calcAll();
+  renderResumen(c,saldos);
+  renderKpis(c,saldos);
+  renderGrafico(c,saldos);
+  guardar();
+}
+
+function guardar(){
+  try{localStorage.setItem(KEY,JSON.stringify({D,s0:$('s0').value,mon:$('mon').value}));}catch(e){}
+}
+function cargar(){
+  try{
+    const s=JSON.parse(localStorage.getItem(KEY)||'null');
+    if(!s)return;
+    Object.keys(D).forEach(k=>{if(Array.isArray(s.D[k])&&s.D[k].length===12)D[k]=s.D[k].map(Number);});
+    $('s0').value=s.s0||0;
+    $('mon').value=s.mon||'$';
+  }catch(e){}
+}
+
+$('tbl').addEventListener('input',e=>{
+  const t=e.target;
+  if(t.dataset.id){D[t.dataset.id][+t.dataset.m]=+t.value||0;actualizar();}
+});
+$('s0').addEventListener('input',actualizar);
+$('mon').addEventListener('input',()=>{renderTabla();actualizar();});
+$('ej').addEventListener('click',()=>{Object.keys(D).forEach(k=>D[k]=[...EJEMPLO[k]]);renderTabla();actualizar();});
+$('lim').addEventListener('click',()=>{if(confirm('¿Borrar todos los datos?')){Object.keys(D).forEach(k=>D[k]=rep(0));renderTabla();actualizar();}});
+
+cargar();
+renderTabla();
+actualizar();
+</script>
+</body>
+</html>
